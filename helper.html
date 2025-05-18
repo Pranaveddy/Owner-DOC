@@ -72,104 +72,123 @@
 
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
 
-<script>
-  const map = L.map('map').setView([20.5937, 78.9629], 5);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+  <script>
+    const map = L.map('map').setView([20.5937, 78.9629], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-  let routeLine, liveMarker, pathLine;
-  let livePath = [];
+    let routeLine, liveMarker, pathLine;
+    let livePath = [];
 
-  async function getCoordinates(place) {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}`, {
-      headers: { 'User-Agent': 'ORS Route Finder' }
-    });
-    const data = await res.json();
-    if (!data.length) throw new Error("Location not found: " + place);
-    return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-  }
-
-  async function getRoute() {
-    const from = document.getElementById('from').value;
-    const to = document.getElementById('to').value;
-
-    document.getElementById('info').innerText = "Calculating route...";
-
-    try {
-      const fromCoords = await getCoordinates(from);
-      const toCoords = await getCoordinates(to);
-
-      const url = `http://localhost:5000/route?start=${fromCoords[1]},${fromCoords[0]}&end=${toCoords[1]},${toCoords[0]}`;
-      const res = await fetch(url);
+    async function getCoordinates(place) {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}`, {
+        headers: { 'User-Agent': 'ORS Route Finder' }
+      });
       const data = await res.json();
-      if (!data.features?.length) throw new Error("No route found");
-
-      const coords = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
-      const distance = data.features[0].properties.summary.distance / 1000;
-      const duration = data.features[0].properties.summary.duration / 60;
-
-      if (routeLine) map.removeLayer(routeLine);
-      routeLine = L.polyline(coords, { color: 'blue', weight: 5 }).addTo(map);
-      map.fitBounds(routeLine.getBounds());
-
-      document.getElementById('info').innerHTML = `
-        <strong>Route Info:</strong><br>
-        <b>Distance:</b> ${distance.toFixed(2)} km<br>
-        <b>Time:</b> ${duration.toFixed(1)} mins
-      `;
-    } catch (err) {
-      document.getElementById('info').innerText = "Error: " + err.message;
-    }
-  }
-
-  function useCurrentLocation() {
-    if (!navigator.geolocation) {
-      alert("Geolocation not supported");
-      return;
+      if (!data.length) throw new Error("Location not found: " + place);
+      return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
     }
 
-    navigator.geolocation.getCurrentPosition(async position => {
-      const lat = position.coords.latitude;
-      const lon = position.coords.longitude;
-      document.getElementById('from').value = `${lat}, ${lon}`;
-      map.setView([lat, lon], 15);
+    async function getRoute() {
+      const from = document.getElementById('from').value;
+      const to = document.getElementById('to').value;
 
-      if (!liveMarker) {
-        liveMarker = L.marker([lat, lon], { icon: rideIcon }).addTo(map).bindPopup("Ride started").openPopup();
-      } else {
-        liveMarker.setLatLng([lat, lon]);
+      document.getElementById('info').innerText = "Calculating route...";
+
+      try {
+        const fromCoords = await getCoordinates(from);
+        const toCoords = await getCoordinates(to);
+
+        const url = 'https://api.openrouteservice.org/v2/directions/driving-car';
+        const headers = {
+          'Authorization': 'YOUR_ORS_API_KEY',
+          'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8'
+        };
+        const body = {
+          coordinates: [
+            [fromCoords[1], fromCoords[0]],
+            [toCoords[1], toCoords[0]]
+          ]
+        };
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+        if (!data.features?.length) throw new Error("No route found");
+
+        const coords = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+        const distance = data.features[0].properties.summary.distance / 1000;
+        const duration = data.features[0].properties.summary.duration / 60;
+
+        if (routeLine) map.removeLayer(routeLine);
+        routeLine = L.polyline(coords, { color: 'blue', weight: 5 }).addTo(map);
+        map.fitBounds(routeLine.getBounds());
+
+        document.getElementById('info').innerHTML = `
+          <strong>Route Info:</strong><br>
+          <b>Distance:</b> ${distance.toFixed(2)} km<br>
+          <b>Time:</b> ${duration.toFixed(1)} mins
+        `;
+      } catch (err) {
+        document.getElementById('info').innerText = "Error: " + err.message;
+      }
+    }
+
+    function useCurrentLocation() {
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported");
+        return;
       }
 
-      livePath = [[lat, lon]];
-      if (pathLine) map.removeLayer(pathLine);
-      pathLine = L.polyline(livePath, { color: 'red' }).addTo(map);
+      navigator.geolocation.getCurrentPosition(async position => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        document.getElementById('from').value = `${lat}, ${lon}`;
+        map.setView([lat, lon], 15);
 
-    }, err => {
-      alert("Error: " + err.message);
+        if (!liveMarker) {
+          liveMarker = L.marker([lat, lon], { icon: rideIcon }).addTo(map).bindPopup("Ride started").openPopup();
+        } else {
+          liveMarker.setLatLng([lat, lon]);
+        }
+
+        livePath = [[lat, lon]];
+        if (pathLine) map.removeLayer(pathLine);
+        pathLine = L.polyline(livePath, { color: 'red' }).addTo(map);
+
+      }, err => {
+        alert("Error: " + err.message);
+      });
+
+      // Watch and update movement
+      navigator.geolocation.watchPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+
+        if (liveMarker) {
+          liveMarker.setLatLng([lat, lon]);
+          livePath.push([lat, lon]);
+          pathLine.setLatLngs(livePath);
+          map.panTo([lat, lon], { animate: true });
+        }
+      }, err => {
+        console.error("Tracking error:", err);
+      }, { enableHighAccuracy: true });
+    }
+
+    // Custom icon for ride
+    const rideIcon = L.icon({
+      iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+      iconSize: [40, 40],
+      iconAnchor: [20, 40]
     });
-
-    // Watch and update movement
-    navigator.geolocation.watchPosition(pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-
-      if (liveMarker) {
-        liveMarker.setLatLng([lat, lon]);
-        livePath.push([lat, lon]);
-        pathLine.setLatLngs(livePath);
-        map.panTo([lat, lon], { animate: true });
-      }
-    }, err => {
-      console.error("Tracking error:", err);
-    }, { enableHighAccuracy: true });
-  }
-
-  // Custom icon for ride
-  const rideIcon = L.icon({
-    iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
-    iconSize: [40, 40],
-    iconAnchor: [20, 40]
-  });
-</script>
+  </script>
 
 </body>
 </html>
