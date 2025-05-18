@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ORS Route Finder</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px;
+      z-index: 1000;
+      font-family: sans-serif;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    input {
+      margin-bottom: 5px;
+      width: 200px;
+      padding: 5px;
+    }
+    button {
+      padding: 5px 10px;
+    }
+    .suggestions {
+      position: absolute;
+      background: white;
+      border: 1px solid #ccc;
+      max-height: 150px;
+      overflow-y: auto;
+      width: 200px;
+      z-index: 1001;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .suggestion-item {
+      padding: 8px;
+      cursor: pointer;
+    }
+    .suggestion-item:hover {
+      background: #f0f0f0;
+    }
+    .input-container {
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <div class="input-container">
+      <label>From: <input type="text" id="from" placeholder="e.g., New Delhi, India" /></label>
+      <div id="from-suggestions" class="suggestions" style="display: none;"></div>
+    </div>
+    <div class="input-container">
+      <label>To: <input type="text" id="to" placeholder="e.g., Mumbai, India" /></label>
+      <div id="to-suggestions" class="suggestions" style="display: none;"></div>
+    </div>
+    <button onclick="useCurrentLocation()">Use My Location</button>
+    <button onclick="getRoute()">Get Route</button>
+    <div id="info"></div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
+<script>
+  const map = L.map('map').setView([20.5937, 78.9629], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+  let routeLine, liveMarker, pathLine;
+  let livePath = [];
+
+  async function getCoordinates(place) {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}`, {
+      headers: { 'User-Agent': 'ORS Route Finder' }
+    });
+    const data = await res.json();
+    if (!data.length) throw new Error("Location not found: " + place);
+    return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+  }
+
+  async function getRoute() {
+    const from = document.getElementById('from').value;
+    const to = document.getElementById('to').value;
+
+    document.getElementById('info').innerText = "Calculating route...";
+
+    try {
+      const fromCoords = await getCoordinates(from);
+      const toCoords = await getCoordinates(to);
+
+      const url = `http://localhost:5000/route?start=${fromCoords[1]},${fromCoords[0]}&end=${toCoords[1]},${toCoords[0]}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.features?.length) throw new Error("No route found");
+
+      const coords = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+      const distance = data.features[0].properties.summary.distance / 1000;
+      const duration = data.features[0].properties.summary.duration / 60;
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.polyline(coords, { color: 'blue', weight: 5 }).addTo(map);
+      map.fitBounds(routeLine.getBounds());
+
+      document.getElementById('info').innerHTML = `
+        <strong>Route Info:</strong><br>
+        <b>Distance:</b> ${distance.toFixed(2)} km<br>
+        <b>Time:</b> ${duration.toFixed(1)} mins
+      `;
+    } catch (err) {
+      document.getElementById('info').innerText = "Error: " + err.message;
+    }
+  }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      alert("Geolocation not supported");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(async position => {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      document.getElementById('from').value = `${lat}, ${lon}`;
+      map.setView([lat, lon], 15);
+
+      if (!liveMarker) {
+        liveMarker = L.marker([lat, lon], { icon: rideIcon }).addTo(map).bindPopup("Ride started").openPopup();
+      } else {
+        liveMarker.setLatLng([lat, lon]);
+      }
+
+      livePath = [[lat, lon]];
+      if (pathLine) map.removeLayer(pathLine);
+      pathLine = L.polyline(livePath, { color: 'red' }).addTo(map);
+
+    }, err => {
+      alert("Error: " + err.message);
+    });
+
+    // Watch and update movement
+    navigator.geolocation.watchPosition(pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      if (liveMarker) {
+        liveMarker.setLatLng([lat, lon]);
+        livePath.push([lat, lon]);
+        pathLine.setLatLngs(livePath);
+        map.panTo([lat, lon], { animate: true });
+      }
+    }, err => {
+      console.error("Tracking error:", err);
+    }, { enableHighAccuracy: true });
+  }
+
+  // Custom icon for ride
+  const rideIcon = L.icon({
+    iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+    iconSize: [40, 40],
+    iconAnchor: [20, 40]
+  });
+</script>
+
+</body>
+</html>
